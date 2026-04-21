@@ -12,6 +12,8 @@ const els = {
   micToggle: document.querySelector("#micToggle"),
   pushToTalk: document.querySelector("#pushToTalk"),
   voiceState: document.querySelector("#voiceState"),
+  micLevel: document.querySelector("#micLevel"),
+  rtcState: document.querySelector("#rtcState"),
   peers: document.querySelector("#peers"),
   chatLog: document.querySelector("#chatLog"),
   chatInput: document.querySelector("#chatInput"),
@@ -32,6 +34,8 @@ let localObjectUrl = null;
 let micStream = null;
 let audioSenderTrack = null;
 const pcs = new Map(); // peerId -> RTCPeerConnection
+let micMeter = null;
+let micMeterTimer = null;
 
 // Sync helpers
 let suppressVideoEvents = false;
@@ -399,6 +403,37 @@ const rtcConfig = {
   iceServers: [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }],
 };
 
+function updateRtcState() {
+  if (pcs.size === 0) {
+    els.rtcState.textContent = "No peers";
+    return;
+  }
+  const states = [];
+  for (const [peerId, pc] of pcs.entries()) {
+    states.push(`${peerId.slice(0, 6)}…: ${pc.iceConnectionState}`);
+  }
+  els.rtcState.textContent = states.join(" | ");
+
+  if ([...pcs.values()].some((pc) => pc.iceConnectionState === "failed")) {
+    addMsg("system", "Voice connection failed on this network. This can happen without a TURN relay (paid or self-hosted).");
+  }
+}
+
+async function tryPlayAllRemoteAudio() {
+  for (const a of [...document.querySelectorAll("audio[data-peer]")]) {
+    try {
+      await a.play();
+    } catch {
+      // still blocked
+    }
+  }
+}
+
+// Some browsers block remote audio autoplay until a user gesture.
+window.addEventListener("pointerdown", () => {
+  void tryPlayAllRemoteAudio();
+});
+
 async function ensurePeerConnection(peerId, polite) {
   if (pcs.has(peerId)) return pcs.get(peerId);
 
@@ -406,7 +441,7 @@ async function ensurePeerConnection(peerId, polite) {
   pcs.set(peerId, pc);
 
   // Remote audio
-  pc.addEventListener("track", (ev) => {
+  pc.addEventListener("track", async (ev) => {
     const [stream] = ev.streams;
     const audio = document.createElement("audio");
     audio.autoplay = true;
@@ -415,12 +450,21 @@ async function ensurePeerConnection(peerId, polite) {
     audio.volume = 1;
     audio.dataset.peer = peerId;
     document.body.appendChild(audio);
+
+    try {
+      await audio.play();
+    } catch {
+      addMsg("system", "Audio is blocked by the browser. Click anywhere on the page once to enable sound.");
+    }
   });
 
   pc.addEventListener("icecandidate", (ev) => {
     if (!ev.candidate) return;
     wsSend({ type: "signal", to: peerId, payload: { type: "ice", candidate: ev.candidate } });
   });
+
+  pc.addEventListener("iceconnectionstatechange", () => updateRtcState());
+  pc.addEventListener("connectionstatechange", () => updateRtcState());
 
   // Add local track if mic already enabled
   if (audioSenderTrack) {
@@ -501,6 +545,9 @@ async function enableMic() {
 
   setPill(els.voiceState, "Mic on", "good");
   els.micToggle.textContent = "Disable mic";
+
+  startMicMeter();
+  void tryPlayAllRemoteAudio();
 }
 
 function disableMic() {
@@ -510,6 +557,7 @@ function disableMic() {
   audioSenderTrack = null;
   setPill(els.voiceState, "Mic off", "muted");
   els.micToggle.textContent = "Enable mic";
+  stopMicMeter();
 }
 
 els.micToggle.addEventListener("click", async () => {
@@ -556,13 +604,61 @@ function closePeer(peerId) {
   }
   // remove remote audio element(s)
   for (const a of [...document.querySelectorAll(`audio[data-peer="${CSS.escape(peerId)}"]`)]) a.remove();
+  updateRtcState();
 }
 
 // UX: if not connected, disable sync expectation
 setStatus("Not connected");
 updateControllerUI();
+updateRtcState();
 
 // Auto-join if opened via share link like /room/<id> or ?room=<id>
 const initialRoom = roomFromUrl();
 if (initialRoom) connect(initialRoom);
+
+function startMicMeter() {
+  stopMicMeter();
+  if (!micStream) return;
+
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) {
+    els.micLevel.textContent = "Unsupported";
+    return;
+  }
+
+  const ctx = new AudioCtx();
+  const src = ctx.createMediaStreamSource(micStream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  src.connect(analyser);
+  const data = new Uint8Array(analyser.fftSize);
+
+  micMeter = { ctx, analyser, data };
+  micMeterTimer = setInterval(() => {
+    if (!micMeter) return;
+    micMeter.analyser.getByteTimeDomainData(micMeter.data);
+    let sum = 0;
+    for (let i = 0; i < micMeter.data.length; i++) {
+      const v = (micMeter.data[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / micMeter.data.length);
+    const pct = Math.min(100, Math.round(rms * 260));
+    els.micLevel.textContent = `${pct}%`;
+  }, 250);
+}
+
+function stopMicMeter() {
+  if (micMeterTimer) clearInterval(micMeterTimer);
+  micMeterTimer = null;
+  if (micMeter?.ctx) {
+    try {
+      micMeter.ctx.close();
+    } catch {
+      // ignore
+    }
+  }
+  micMeter = null;
+  els.micLevel.textContent = "—";
+}
 
