@@ -78,8 +78,30 @@ function randomRoomId() {
   return Math.random().toString(36).slice(2, 8);
 }
 
+function roomFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const q = (params.get("room") || "").trim();
+  if (q) return q;
+  const p = location.pathname.replace(/^\/+/, "").trim();
+  if (!p) return null;
+  // allow /abc123 or /room/abc123
+  const parts = p.split("/").filter(Boolean);
+  if (parts.length === 1) return parts[0];
+  if (parts.length >= 2 && parts[0].toLowerCase() === "room") return parts[1];
+  return null;
+}
+
+function setRoomInUrl(room) {
+  const url = new URL(location.href);
+  url.pathname = `/room/${encodeURIComponent(room)}`;
+  url.searchParams.delete("room");
+  history.replaceState(null, "", url.toString());
+}
+
 async function connect(room) {
   roomId = room;
+  els.roomId.value = roomId;
+  setRoomInUrl(roomId);
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const wsUrl = `${proto}//${location.host}/ws?room=${encodeURIComponent(roomId)}&id=${encodeURIComponent(clientId)}`;
 
@@ -539,4 +561,8 @@ function closePeer(peerId) {
 // UX: if not connected, disable sync expectation
 setStatus("Not connected");
 updateControllerUI();
+
+// Auto-join if opened via share link like /room/<id> or ?room=<id>
+const initialRoom = roomFromUrl();
+if (initialRoom) connect(initialRoom);
 

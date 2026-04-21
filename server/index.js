@@ -10,7 +10,13 @@ const app = express();
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
-app.use(express.static(path.join(__dirname, "..", "public")));
+const publicDir = path.join(__dirname, "..", "public");
+app.use(express.static(publicDir));
+
+// SPA fallback so links like /room/abc123 work on refresh (Render otherwise returns 404).
+app.get("*", (req, res) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
