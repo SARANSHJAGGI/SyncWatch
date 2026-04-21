@@ -1,0 +1,19 @@
+{
+  "name": "sync-watch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Watch local videos in sync with voice chat (no uploads).",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "node server/index.js",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.3"
+  }
+}
+

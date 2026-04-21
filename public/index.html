@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SyncWatch</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div class="brand">
+          <div class="logo">SW</div>
+          <div>
+            <div class="title">SyncWatch</div>
+            <div class="subtitle">Local files • in sync • with voice</div>
+          </div>
+        </div>
+
+        <div class="room">
+          <input id="roomId" class="input" placeholder="room id (e.g. abc123)" />
+          <button id="createRoom" class="btn">Create</button>
+          <button id="joinRoom" class="btn btnPrimary">Join</button>
+          <div id="status" class="status">Not connected</div>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="card">
+          <div class="cardHeader">
+            <div class="cardTitle">1) Pick the same video file</div>
+            <div id="fileSig" class="pill pillMuted">No file selected</div>
+          </div>
+
+          <div id="dropzone" class="dropzone">
+            <input id="fileInput" type="file" accept="video/*" hidden />
+            <div class="dzTitle">Drag & drop a video here</div>
+            <div class="dzSub">or click to browse (never uploads)</div>
+          </div>
+
+          <div class="row">
+            <button id="becomeController" class="btn">Take controls</button>
+            <div id="controller" class="muted">Controller: none</div>
+          </div>
+
+          <video id="video" class="video" controls playsinline></video>
+
+          <div class="hint">
+            Tip: if playback feels off, click the video's scrub bar once; the app will resync on the next action.
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="cardHeader">
+            <div class="cardTitle">2) Voice chat</div>
+            <div id="voiceState" class="pill pillMuted">Mic off</div>
+          </div>
+
+          <div class="row">
+            <button id="micToggle" class="btn btnPrimary">Enable mic</button>
+            <label class="toggle">
+              <input id="pushToTalk" type="checkbox" />
+              <span>Push-to-talk</span>
+            </label>
+          </div>
+
+          <div class="row">
+            <div class="kv">
+              <div class="k">Noise suppression</div>
+              <div class="v">Browser built-in</div>
+            </div>
+            <div class="kv">
+              <div class="k">Echo cancellation</div>
+              <div class="v">On</div>
+            </div>
+          </div>
+
+          <div class="sep"></div>
+
+          <div class="cardHeader">
+            <div class="cardTitle">Room notes</div>
+            <div id="peers" class="pill pillMuted">Peers: 0</div>
+          </div>
+
+          <div class="chat">
+            <div id="chatLog" class="chatLog"></div>
+            <div class="chatRow">
+              <input id="chatInput" class="input" placeholder="type a message…" />
+              <button id="chatSend" class="btn">Send</button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="muted">
+          This app never uploads your video. It only syncs controls (play/pause/seek) and uses WebRTC for voice.
+        </div>
+      </footer>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
+
