@@ -11,6 +11,8 @@ const els = {
   controller: document.querySelector("#controller"),
   micToggle: document.querySelector("#micToggle"),
   pushToTalk: document.querySelector("#pushToTalk"),
+  autoGain: document.querySelector("#autoGain"),
+  noiseSuppressionToggle: document.querySelector("#noiseSuppression"),
   voiceState: document.querySelector("#voiceState"),
   micLevel: document.querySelector("#micLevel"),
   rtcState: document.querySelector("#rtcState"),
@@ -135,14 +137,14 @@ async function connect(room) {
     if (msg.type === "peers") {
       els.peers.textContent = `Peers: ${msg.peers.length}`;
       // create peer connections for existing peers (voice)
-      for (const peerId of msg.peers) await ensurePeerConnection(peerId, true);
+      for (const peerId of msg.peers) await ensurePeerConnection(peerId);
       return;
     }
 
     if (msg.type === "peer-joined") {
       addMsg("system", `${msg.id} joined`);
       bumpPeers(+1);
-      await ensurePeerConnection(msg.id, true);
+      await ensurePeerConnection(msg.id);
       return;
     }
 
@@ -434,7 +436,13 @@ window.addEventListener("pointerdown", () => {
   void tryPlayAllRemoteAudio();
 });
 
-async function ensurePeerConnection(peerId, polite) {
+function isPoliteFor(peerId) {
+  // Deterministic: exactly one side is "polite" to avoid offer-glare deadlocks.
+  // Lexicographic compare is fine because both ids are UUID strings.
+  return clientId.localeCompare(peerId) > 0;
+}
+
+async function ensurePeerConnection(peerId) {
   if (pcs.has(peerId)) return pcs.get(peerId);
 
   const pc = new RTCPeerConnection(rtcConfig);
@@ -456,11 +464,17 @@ async function ensurePeerConnection(peerId, polite) {
     } catch {
       addMsg("system", "Audio is blocked by the browser. Click anywhere on the page once to enable sound.");
     }
+
+    addMsg("system", `Receiving audio from ${peerId.slice(0, 6)}…`);
   });
 
   pc.addEventListener("icecandidate", (ev) => {
     if (!ev.candidate) return;
     wsSend({ type: "signal", to: peerId, payload: { type: "ice", candidate: ev.candidate } });
+  });
+
+  pc.addEventListener("icecandidateerror", (e) => {
+    addMsg("system", `ICE candidate error: ${e?.errorText || "unknown"}`);
   });
 
   pc.addEventListener("iceconnectionstatechange", () => updateRtcState());
@@ -471,14 +485,16 @@ async function ensurePeerConnection(peerId, polite) {
     pc.addTrack(audioSenderTrack, micStream);
   }
 
-  // Perfect negotiation (simplified)
+  // Perfect negotiation (reliable)
   let makingOffer = false;
   let ignoreOffer = false;
+  let isSettingRemoteAnswerPending = false;
+  const polite = isPoliteFor(peerId);
 
   pc.addEventListener("negotiationneeded", async () => {
     try {
       makingOffer = true;
-      await pc.setLocalDescription();
+      await pc.setLocalDescription(await pc.createOffer());
       wsSend({ type: "signal", to: peerId, payload: { type: "sdp", description: pc.localDescription } });
     } catch {
       // ignore
@@ -487,23 +503,44 @@ async function ensurePeerConnection(peerId, polite) {
     }
   });
 
-  pc.__sw = { polite, get makingOffer() { return makingOffer; }, set ignoreOffer(v) { ignoreOffer = v; }, get ignoreOffer() { return ignoreOffer; } };
+  pc.__sw = {
+    polite,
+    get makingOffer() {
+      return makingOffer;
+    },
+    get isSettingRemoteAnswerPending() {
+      return isSettingRemoteAnswerPending;
+    },
+    set isSettingRemoteAnswerPending(v) {
+      isSettingRemoteAnswerPending = v;
+    },
+    set ignoreOffer(v) {
+      ignoreOffer = v;
+    },
+    get ignoreOffer() {
+      return ignoreOffer;
+    },
+  };
   return pc;
 }
 
 async function onSignal(from, payload) {
-  const pc = await ensurePeerConnection(from, false);
+  const pc = await ensurePeerConnection(from);
   const state = pc.__sw;
 
   if (payload.type === "sdp") {
     const description = payload.description;
-    const offerCollision = description.type === "offer" && (state.makingOffer || pc.signalingState !== "stable");
+    const readyForOffer =
+      !state.makingOffer && (pc.signalingState === "stable" || state.isSettingRemoteAnswerPending);
+    const offerCollision = description.type === "offer" && !readyForOffer;
     state.ignoreOffer = !state.polite && offerCollision;
     if (state.ignoreOffer) return;
 
+    state.isSettingRemoteAnswerPending = description.type === "answer";
     await pc.setRemoteDescription(description);
+    state.isSettingRemoteAnswerPending = false;
     if (description.type === "offer") {
-      await pc.setLocalDescription();
+      await pc.setLocalDescription(await pc.createAnswer());
       wsSend({ type: "signal", to: from, payload: { type: "sdp", description: pc.localDescription } });
     }
     return;
@@ -523,8 +560,8 @@ async function enableMic() {
   micStream = await navigator.mediaDevices.getUserMedia({
     audio: {
       echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
+      noiseSuppression: !!els.noiseSuppressionToggle?.checked,
+      autoGainControl: !!els.autoGain?.checked,
     },
     video: false,
   });
@@ -560,6 +597,12 @@ function disableMic() {
   stopMicMeter();
 }
 
+async function restartMicIfOn() {
+  if (!micStream) return;
+  disableMic();
+  await enableMic();
+}
+
 els.micToggle.addEventListener("click", async () => {
   try {
     if (micStream) disableMic();
@@ -574,6 +617,13 @@ els.pushToTalk.addEventListener("change", () => {
   if (!micStream) return;
   const track = micStream.getAudioTracks()[0];
   track.enabled = !els.pushToTalk.checked;
+});
+
+els.autoGain?.addEventListener("change", () => {
+  void restartMicIfOn();
+});
+els.noiseSuppressionToggle?.addEventListener("change", () => {
+  void restartMicIfOn();
 });
 
 window.addEventListener("keydown", (e) => {
